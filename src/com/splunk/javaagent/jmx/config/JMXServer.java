@@ -36,7 +36,7 @@ public class JMXServer {
 	public String jvmDescription;
 
 	// remote JMX port
-	public int jmxport;
+	public int jmxport = 0;
 
 	// JMX username
 	public String jmxuser = "";

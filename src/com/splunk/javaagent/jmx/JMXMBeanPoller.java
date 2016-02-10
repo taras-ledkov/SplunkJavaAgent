@@ -1,12 +1,18 @@
 package com.splunk.javaagent.jmx;
 
 import java.io.FileInputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.lang.management.ManagementFactory;
 import java.net.URL;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import javax.management.MBeanServerConnection;
+import javax.management.remote.JMXConnector;
+import javax.management.remote.JMXConnectorFactory;
+import javax.management.remote.JMXServiceURL;
 
 import org.apache.log4j.Logger;
 import org.exolab.castor.mapping.Mapping;
@@ -25,7 +31,7 @@ public class JMXMBeanPoller {
 	private JMXPoller config;
 	private Formatter formatter;
 	private Transport transport;
-	private MBeanServerConnection serverConnection;
+	private Map<JMXServer, JMXConnector> connections = new HashMap<>();
 	boolean registerNotifications = true;
 
 	public JMXMBeanPoller(String configFile) {
@@ -43,7 +49,7 @@ public class JMXMBeanPoller {
 			}
 			connect();
 		} catch (Throwable e) {
-
+			e.printStackTrace();
 		}
 
 	}
@@ -54,9 +60,33 @@ public class JMXMBeanPoller {
 	 * @throws Exception
 	 */
 	private void connect() throws Exception {
+		List<JMXServer> servers = this.config.normalizeMultiPIDs();
+		if (servers != null) {
 
-		this.serverConnection = ManagementFactory.getPlatformMBeanServer();
+			for (JMXServer server : servers) {
+				connections.put(server, createJMXConnector(server));
+			}
+		}
+	}
 
+	private MBeanServerConnection createMBeanServerConnection(JMXServer serverConfig) throws Exception {
+		JMXConnector jmxConnector = connections.get(serverConfig);
+		if (jmxConnector == null) {
+			return ManagementFactory.getPlatformMBeanServer();
+		} else {
+			return jmxConnector.getMBeanServerConnection();
+		}
+	}
+
+	private static JMXConnector createJMXConnector(JMXServer serverConfig) throws Exception {
+		String host = serverConfig.getHost();
+		int port = serverConfig.getJmxport();
+		if ((host != null) && !host.isEmpty() && port != 0) {
+			JMXServiceURL url = new JMXServiceURL(String.format("service:jmx:rmi:///jndi/rmi://%s:%d/jmxrmi", host, port));
+			return  JMXConnectorFactory.connect(url, null);
+		} else {
+			return null;
+		}
 	}
 
 	public void execute() {
@@ -74,7 +104,7 @@ public class JMXMBeanPoller {
 								this.formatter.getFormatterInstance(),
 								this.transport.getTransportInstance(),
 								this.registerNotifications,
-								this.serverConnection).start();
+								createMBeanServerConnection(server)).start();
 					}
 					// we only want to register a notification listener on the
 					// first iteration
@@ -101,6 +131,32 @@ public class JMXMBeanPoller {
 	 */
 	private static JMXPoller loadConfig(String configFileName) throws Exception {
 
+		// xsd validation
+		try (InputStream in = getConfigStream(configFileName)) {
+			InputSource inputSource = new InputSource(in);
+			SchemaValidator validator = new SchemaValidator();
+			validator.validateSchema(inputSource);
+		}
+
+		try (InputStream in = getConfigStream(configFileName)) {
+			InputSource inputSource = new InputSource(in);
+			// use CASTOR to parse XML into Java POJOs
+			Mapping mapping = new Mapping();
+
+			URL mappingURL = JMXMBeanPoller.class
+					.getResource("/com/splunk/javaagent/jmx/mapping.xml");
+			mapping.loadMapping(mappingURL);
+			Unmarshaller unmar = new Unmarshaller(mapping);
+
+			// for some reason the xsd validator closes the file stream, so re-open
+
+			inputSource = new InputSource(in);
+			JMXPoller poller = (JMXPoller) unmar.unmarshal(inputSource);
+			return poller;
+		}
+	}
+
+	private static InputStream getConfigStream(String configFileName) throws IOException {
 		InputStream in = null;
 		boolean foundFile = false;
 
@@ -122,29 +178,20 @@ public class JMXMBeanPoller {
 		}
 
 		if (!foundFile) {
-			throw new Exception("The config file " + configFileName
+			throw new IOException("The config file " + configFileName
 					+ " does not exist");
 		}
 
-		// xsd validation
-		InputSource inputSource = new InputSource(file.openStream());
-		SchemaValidator validator = new SchemaValidator();
-		validator.validateSchema(inputSource);
-
-		// use CASTOR to parse XML into Java POJOs
-		Mapping mapping = new Mapping();
-
-		URL mappingURL = JMXMBeanPoller.class
-				.getResource("/com/splunk/javaagent/jmx/mapping.xml");
-		mapping.loadMapping(mappingURL);
-		Unmarshaller unmar = new Unmarshaller(mapping);
-
-		// for some reason the xsd validator closes the file stream, so re-open
-		inputSource = new InputSource(file.openStream());
-		JMXPoller poller = (JMXPoller) unmar.unmarshal(inputSource);
-
-		return poller;
-
+		return in;
 	}
 
+	public void stop() {
+		for(JMXConnector jmxConnector: connections.values()) {
+			try {
+				jmxConnector.close();
+			} catch (IOException e) {
+				e.printStackTrace();
+			}
+		}
+	}
 }

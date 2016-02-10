@@ -304,7 +304,6 @@ public class SplunkJavaAgent implements JavaAgentMXBean {
 				try {
 					Thread.sleep(500);
 				} catch (InterruptedException e) {
-
 				}
 			}
 		}
@@ -404,6 +403,7 @@ public class SplunkJavaAgent implements JavaAgentMXBean {
 		}
 
 		public void stopThread() {
+			poller.stop();
 			this.stopped = true;
 		}
 
