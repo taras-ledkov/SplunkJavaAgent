@@ -49,7 +49,7 @@ public class JMXMBeanPoller {
 			}
 			connect();
 		} catch (Throwable e) {
-			e.printStackTrace();
+			logger.error("Error at creation", e);
 		}
 
 	}
@@ -82,6 +82,7 @@ public class JMXMBeanPoller {
 		String host = serverConfig.getHost();
 		int port = serverConfig.getJmxport();
 		if ((host != null) && !host.isEmpty() && port != 0) {
+			logger.info("Connect to JMX server: " + host + ":" + port);
 			JMXServiceURL url = new JMXServiceURL(String.format("service:jmx:rmi:///jndi/rmi://%s:%d/jmxrmi", host, port));
 			return  JMXConnectorFactory.connect(url, null);
 		} else {
@@ -89,7 +90,7 @@ public class JMXMBeanPoller {
 		}
 	}
 
-	public void execute() {
+	public void execute() throws Exception {
 
 		logger.info("Starting JMX Poller");
 		try {
@@ -116,9 +117,8 @@ public class JMXMBeanPoller {
 				logger.error("The root config object(JMXPoller) failed to initialize");
 			}
 		} catch (Exception e) {
-
-			logger.error("JMX Error : " + e.getMessage());
-			// System.exit(1);
+			logger.error("JMX Error", e);
+			throw e;
 		}
 	}
 

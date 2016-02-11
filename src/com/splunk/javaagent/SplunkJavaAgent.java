@@ -424,8 +424,9 @@ public class SplunkJavaAgent implements JavaAgentMXBean {
 
 				} catch (Throwable t) {
 					logger.error("Error running JMX thread : " + t.getMessage());
+					poller.stop();
+					poller = new JMXMBeanPoller(configFile);
 				}
-
 			}
 		}
 
