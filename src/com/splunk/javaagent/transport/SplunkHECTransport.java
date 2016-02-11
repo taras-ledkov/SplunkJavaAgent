@@ -1,6 +1,8 @@
 package com.splunk.javaagent.transport;
 
+import java.net.InetAddress;
 import java.net.URI;
+import java.net.UnknownHostException;
 import java.security.cert.X509Certificate;
 import java.util.Collections;
 import java.util.LinkedList;
@@ -419,6 +421,12 @@ public class SplunkHECTransport extends SplunkInput implements SplunkTransport,
 
 	public void setSource(String source) {
 		this.source = source;
+		if(this.source.contains("${hostname}")) {
+			try {
+				this.source = this.source.replace("${hostname}", InetAddress.getLocalHost().getHostName());
+			} catch (UnknownHostException e) {
+			}
+		}
 	}
 
 	public String getSourcetype() {
