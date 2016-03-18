@@ -26,172 +26,173 @@ import com.splunk.javaagent.jmx.config.Transport;
 
 public class JMXMBeanPoller {
 
-	private static Logger logger = Logger.getLogger(JMXMBeanPoller.class);
+    private static Logger logger = Logger.getLogger(JMXMBeanPoller.class);
 
-	private JMXPoller config;
-	private Formatter formatter;
-	private Transport transport;
-	private Map<JMXServer, JMXConnector> connections = new HashMap<>();
-	boolean registerNotifications = true;
+    private JMXPoller config;
+    private Formatter formatter;
+    private Transport transport;
+    private Map<JMXServer, JMXConnector> connections = new HashMap<>();
+    boolean registerNotifications = true;
 
-	public JMXMBeanPoller(String configFile) {
+    public JMXMBeanPoller(String configFile) throws Exception {
+        this.config = JMXMBeanPoller.loadConfig(configFile);
+        this.config.normalizeClusters();
+        this.formatter = config.getFormatter();
+        if (this.formatter == null) {
+            this.formatter = new Formatter();// default
+        }
+        this.transport = config.getTransport();
+        if (this.transport == null) {
+            this.transport = new Transport();// default
+        }
+        connect();
+    }
 
-		try {
-			this.config = JMXMBeanPoller.loadConfig(configFile);
-			this.config.normalizeClusters();
-			this.formatter = config.getFormatter();
-			if (this.formatter == null) {
-				this.formatter = new Formatter();// default
-			}
-			this.transport = config.getTransport();
-			if (this.transport == null) {
-				this.transport = new Transport();// default
-			}
-			connect();
-		} catch (Throwable e) {
-			logger.error("Error at creation", e);
-		}
+    /**
+     * Connect to the local JMX Server
+     *
+     * @throws Exception
+     */
+    private void connect() throws Exception {
+        List<JMXServer> servers = this.config.normalizeMultiPIDs();
+        if (servers != null) {
 
-	}
+            for (JMXServer server : servers) {
+                connections.put(server, createJMXConnector(server));
+            }
+        }
+    }
 
-	/**
-	 * Connect to the local JMX Server
-	 * 
-	 * @throws Exception
-	 */
-	private void connect() throws Exception {
-		List<JMXServer> servers = this.config.normalizeMultiPIDs();
-		if (servers != null) {
+    private MBeanServerConnection createMBeanServerConnection(JMXServer serverConfig) throws Exception {
+        JMXConnector jmxConnector = connections.get(serverConfig);
+        if (jmxConnector == null) {
+            return ManagementFactory.getPlatformMBeanServer();
+        } else {
+            return jmxConnector.getMBeanServerConnection();
+        }
+    }
 
-			for (JMXServer server : servers) {
-				connections.put(server, createJMXConnector(server));
-			}
-		}
-	}
+    private static JMXConnector createJMXConnector(JMXServer serverConfig) throws Exception {
+        String host = serverConfig.getHost();
+        int port = serverConfig.getJmxport();
+        if ((host != null) && !host.isEmpty() && port != 0) {
+            logger.info("Connect to JMX server: " + host + ":" + port);
+            JMXServiceURL url = new JMXServiceURL(String.format("service:jmx:rmi:///jndi/rmi://%s:%d/jmxrmi", host, port));
+            return JMXConnectorFactory.connect(url, null);
+        } else {
+            return null;
+        }
+    }
 
-	private MBeanServerConnection createMBeanServerConnection(JMXServer serverConfig) throws Exception {
-		JMXConnector jmxConnector = connections.get(serverConfig);
-		if (jmxConnector == null) {
-			return ManagementFactory.getPlatformMBeanServer();
-		} else {
-			return jmxConnector.getMBeanServerConnection();
-		}
-	}
+    public void execute() throws Exception {
 
-	private static JMXConnector createJMXConnector(JMXServer serverConfig) throws Exception {
-		String host = serverConfig.getHost();
-		int port = serverConfig.getJmxport();
-		if ((host != null) && !host.isEmpty() && port != 0) {
-			logger.info("Connect to JMX server: " + host + ":" + port);
-			JMXServiceURL url = new JMXServiceURL(String.format("service:jmx:rmi:///jndi/rmi://%s:%d/jmxrmi", host, port));
-			return  JMXConnectorFactory.connect(url, null);
-		} else {
-			return null;
-		}
-	}
+        logger.info("Starting JMX Poller");
+        try {
 
-	public void execute() throws Exception {
+            if (this.config != null) {
+                // get list of JMX Servers and process in their own thread.
+                List<JMXServer> servers = this.config.normalizeMultiPIDs();
+                if (servers != null) {
 
-		logger.info("Starting JMX Poller");
-		try {
+                    for (JMXServer server : servers) {
+                        new ProcessServerThread(server,
+                                this.formatter.getFormatterInstance(),
+                                this.transport.getTransportInstance(),
+                                this.registerNotifications,
+                                createMBeanServerConnection(server)).start();
+                    }
+                    // we only want to register a notification listener on the
+                    // first iteration
+                    this.registerNotifications = false;
+                } else {
+                    logger.error("No JMX servers have been specified");
+                }
+            } else {
+                logger.error("The root config object(JMXPoller) failed to initialize");
+            }
+        } catch (Exception e) {
+            logger.error("JMX Error", e);
+            throw e;
+        }
+    }
 
-			if (this.config != null) {
-				// get list of JMX Servers and process in their own thread.
-				List<JMXServer> servers = this.config.normalizeMultiPIDs();
-				if (servers != null) {
+    /**
+     * Parse the config XML into Java POJOs and validate against XSD
+     *
+     * @param configFileName
+     * @return The configuration POJO root
+     * @throws Exception
+     */
+    private static JMXPoller loadConfig(String configFileName) throws Exception {
 
-					for (JMXServer server : servers) {
-						new ProcessServerThread(server,
-								this.formatter.getFormatterInstance(),
-								this.transport.getTransportInstance(),
-								this.registerNotifications,
-								createMBeanServerConnection(server)).start();
-					}
-					// we only want to register a notification listener on the
-					// first iteration
-					this.registerNotifications = false;
-				} else {
-					logger.error("No JMX servers have been specified");
-				}
-			} else {
-				logger.error("The root config object(JMXPoller) failed to initialize");
-			}
-		} catch (Exception e) {
-			logger.error("JMX Error", e);
-			throw e;
-		}
-	}
+        // xsd validation
+        try (InputStream in = getConfigStream(configFileName)) {
+            InputSource inputSource = new InputSource(in);
+            SchemaValidator validator = new SchemaValidator();
+            validator.validateSchema(inputSource);
+        }
 
-	/**
-	 * Parse the config XML into Java POJOs and validate against XSD
-	 * 
-	 * @param configFileName
-	 * @return The configuration POJO root
-	 * @throws Exception
-	 */
-	private static JMXPoller loadConfig(String configFileName) throws Exception {
+        try (InputStream in = getConfigStream(configFileName)) {
+            InputSource inputSource = new InputSource(in);
+            // use CASTOR to parse XML into Java POJOs
+            Mapping mapping = new Mapping();
 
-		// xsd validation
-		try (InputStream in = getConfigStream(configFileName)) {
-			InputSource inputSource = new InputSource(in);
-			SchemaValidator validator = new SchemaValidator();
-			validator.validateSchema(inputSource);
-		}
+            URL mappingURL = JMXMBeanPoller.class
+                    .getResource("/com/splunk/javaagent/jmx/mapping.xml");
+            mapping.loadMapping(mappingURL);
+            Unmarshaller unmar = new Unmarshaller(mapping);
 
-		try (InputStream in = getConfigStream(configFileName)) {
-			InputSource inputSource = new InputSource(in);
-			// use CASTOR to parse XML into Java POJOs
-			Mapping mapping = new Mapping();
+            // for some reason the xsd validator closes the file stream, so re-open
 
-			URL mappingURL = JMXMBeanPoller.class
-					.getResource("/com/splunk/javaagent/jmx/mapping.xml");
-			mapping.loadMapping(mappingURL);
-			Unmarshaller unmar = new Unmarshaller(mapping);
+            inputSource = new InputSource(in);
+            JMXPoller poller = (JMXPoller) unmar.unmarshal(inputSource);
+            return poller;
+        }
+    }
 
-			// for some reason the xsd validator closes the file stream, so re-open
+    private static InputStream getConfigStream(String configFileName) throws IOException {
+        InputStream in = null;
+        boolean foundFile = false;
 
-			inputSource = new InputSource(in);
-			JMXPoller poller = (JMXPoller) unmar.unmarshal(inputSource);
-			return poller;
-		}
-	}
+        // look inside the jar first
+        URL file = JMXMBeanPoller.class.getResource("/" + configFileName);
 
-	private static InputStream getConfigStream(String configFileName) throws IOException {
-		InputStream in = null;
-		boolean foundFile = false;
+        if (file != null) {
+            in = file.openStream();
+            foundFile = true;
+        } else {
+            try {
+                // look on the filesystem
+                in = new FileInputStream(configFileName);
+                foundFile = true;
+            } catch (Exception e) {
+                foundFile = false;
+            }
 
-		// look inside the jar first
-		URL file = JMXMBeanPoller.class.getResource("/" + configFileName);
+        }
 
-		if (file != null) {
-			in = file.openStream();
-			foundFile = true;
-		} else {
-			try {
-				// look on the filesystem
-				in = new FileInputStream(configFileName);
-				foundFile = true;
-			} catch (Exception e) {
-				foundFile = false;
-			}
+        if (!foundFile) {
+            throw new IOException("The config file " + configFileName
+                    + " does not exist");
+        }
 
-		}
+        return in;
+    }
 
-		if (!foundFile) {
-			throw new IOException("The config file " + configFileName
-					+ " does not exist");
-		}
+    public void stop() {
+        try {
+            if (connections == null) return;
 
-		return in;
-	}
-
-	public void stop() {
-		for(JMXConnector jmxConnector: connections.values()) {
-			try {
-				jmxConnector.close();
-			} catch (IOException e) {
-				e.printStackTrace();
-			}
-		}
-	}
+            for (JMXConnector jmxConnector : connections.values()) {
+                try {
+                    if (jmxConnector == null) break;
+                    jmxConnector.close();
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            }
+        } catch (Throwable th) {
+            //swallow
+        }
+    }
 }

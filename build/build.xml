@@ -99,9 +99,13 @@
             <manifest>
 
                 <attribute
-                    name="Premain-Class"
-                    value="${manifest-premain-class}" />
-                
+                        name="Premain-Class"
+                        value="${manifest-premain-class}" />
+
+                <attribute
+                        name="Main-Class"
+                        value="${manifest-premain-class}" />
+
             </manifest>
             
         </jar>
